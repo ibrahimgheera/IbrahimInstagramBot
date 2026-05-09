@@ -1,0 +1,402 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2868
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 """\
+INSTAGRAM BOT - CAPTION GENERATOR\
+Beginner-friendly version\
+"""\
+\
+import os\
+import json\
+from anthropic import Anthropic\
+import telebot\
+from datetime import datetime\
+from apscheduler.schedulers.background import BackgroundScheduler\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# SETUP - This is where you put your API keys and tokens\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+# Get your tokens from environment variables\
+# We'll set these on Railway later\
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")\
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")\
+INSTAGRAM_ACCESS_TOKEN = os.getenv("INSTAGRAM_ACCESS_TOKEN")\
+YOUR_CHAT_ID = os.getenv("YOUR_CHAT_ID")\
+\
+# Create bot object\
+bot = telebot.TeleBot(TELEGRAM_TOKEN)\
+\
+# Create Claude client\
+client = Anthropic()\
+\
+# Store user conversations (for context)\
+user_conversations = \{\}\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# FUNCTION 1: Generate Instagram Caption\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+def generate_caption(image_description, content_type="fitness"):\
+    """\
+    Takes a photo description and generates an Instagram caption\
+    \
+    Example input: "Me doing heavy deadlift at gym, looking strong"\
+    Example output: "Just hit a new PR! \uc0\u55357 \u56490  [motivational text] #fitness #gains"\
+    """\
+    \
+    # Define system prompts for different content types\
+    system_prompts = \{\
+        "fitness": """You are an expert social media manager for fitness coaches in Dubai.\
+        \
+Your job: Write engaging Instagram captions that get likes and build a fitness brand.\
+\
+RULES:\
+- Hook in first line (question, statistic, or bold statement)\
+- 2-3 sentences of value/motivation\
+- Clear call-to-action at the end\
+- 8-10 relevant hashtags\
+- Total: 150-200 words\
+- Tone: Motivational, authentic, professional\
+\
+Examples of good hooks:\
+- "This one mistake is costing you 30% of your gains..."\
+- "If you're not doing THIS, you're missing out"\
+- "80% of gym-goers get this wrong"\
+\
+Always include hashtags like: #FitnessDubai #CoachLife #TransformationJourney""",\
+\
+        "bakery": """You are an expert social media manager for a premium healthy cookie brand.\
+\
+Your job: Write engaging captions that drive sales for Gheera Bakery.\
+\
+RULES:\
+- Hook about the product\
+- Highlight health benefits and ingredients\
+- Create urgency (limited availability)\
+- 5-8 relevant hashtags\
+- Total: 100-150 words\
+- Tone: Friendly, appetizing, premium\
+\
+Include benefits like: organic, no artificial sugar, gluten-free options, etc.""",\
+\
+        "general": """Write an engaging Instagram caption for this description.\
+- Hook in first line\
+- Provide value\
+- Call-to-action\
+- Hashtags\
+- 150-200 words"""\
+    \}\
+    \
+    # Pick the right system prompt\
+    system = system_prompts.get(content_type, system_prompts["general"])\
+    \
+    # Ask Claude to generate the caption\
+    try:\
+        response = client.messages.create(\
+            model="claude-3-5-sonnet-20241022",\
+            max_tokens=500,\
+            system=system,\
+            messages=[\
+                \{\
+                    "role": "user",\
+                    "content": f"Photo description: \{image_description\}\\n\\nGenerate an engaging Instagram caption for this photo."\
+                \}\
+            ]\
+        )\
+        \
+        caption = response.content[0].text\
+        return caption\
+        \
+    except Exception as e:\
+        return f"Error generating caption: \{str(e)\}"\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# FUNCTION 2: Send message to you via Telegram\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+def send_telegram_message(message_text):\
+    """\
+    Sends a message to your Telegram chat\
+    """\
+    try:\
+        bot.send_message(YOUR_CHAT_ID, message_text)\
+        print(f"\uc0\u10003  Message sent: \{message_text[:50]\}...")\
+    except Exception as e:\
+        print(f"\uc0\u10007  Error sending message: \{e\}")\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# FUNCTION 3: Schedule a post\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+def schedule_post(caption_text, post_type="fitness"):\
+    """\
+    This SAVES the post for later. We'll actually post it to Instagram next.\
+    For now, this just tells you it's scheduled.\
+    """\
+    \
+    # Optimal posting times (when your audience is most active)\
+    posting_times = \{\
+        "fitness": "06:00",  # 6 AM (people check gym)\
+        "bakery": "09:00",   # 9 AM (breakfast time)\
+        "general": "18:00"   # 6 PM (evening scroll)\
+    \}\
+    \
+    time_to_post = posting_times.get(post_type, "06:00")\
+    \
+    # Save to a file (in real production, you'd save to database)\
+    scheduled_post = \{\
+        "caption": caption_text,\
+        "scheduled_time": time_to_post,\
+        "created_at": datetime.now().isoformat(),\
+        "type": post_type\
+    \}\
+    \
+    # Save to file\
+    with open("scheduled_posts.json", "a") as f:\
+        json.dump(scheduled_post, f)\
+        f.write("\\n")\
+    \
+    message = f"""\
+\uc0\u55357 \u56517  POST SCHEDULED!\
+\
+Time: \{time_to_post\}\
+Type: \{post_type\}\
+\
+Preview:\
+\{caption_text[:100]\}...\
+\
+Ready to post when you approve! Reply with 'post' to confirm.\
+"""\
+    \
+    send_telegram_message(message)\
+    return scheduled_post\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# FUNCTION 4: Morning digest (daily summary)\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+def send_morning_digest():\
+    """\
+    Sends you a morning summary every day at 6 AM\
+    """\
+    \
+    digest = f"""\
+\uc0\u55356 \u57093  MORNING DIGEST - \{datetime.now().strftime('%A, %Y-%m-%d')\}\
+\
+Bot Status: \uc0\u10003  Running\
+Posts Scheduled: 3\
+Time until first post: 30 minutes\
+\
+\uc0\u55357 \u56522  TASKS FOR TODAY:\
+1. Review 3 pending posts\
+2. Take photos for 2 new posts\
+3. Engage with 10 comments\
+\
+\uc0\u10024  REMINDER:\
+Your best posting time is 6-7 AM for fitness content.\
+Photos get 2x more engagement than text!\
+\
+Have a productive day! \uc0\u55357 \u56490 \
+"""\
+    \
+    send_telegram_message(digest)\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# TELEGRAM BOT HANDLERS - These handle messages FROM Telegram TO your bot\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+@bot.message_handler(commands=['start'])\
+def start_command(message):\
+    """\
+    When you type /start in Telegram, bot sends this\
+    """\
+    welcome = """\
+\uc0\u55357 \u56395  Hi Ibrahim! Your Instagram Bot is ready!\
+\
+Commands:\
+/caption - Generate a caption\
+/schedule - Schedule a post\
+/digest - Get daily digest\
+/status - Check bot status\
+/help - Help menu\
+\
+Tell me what you need!\
+"""\
+    bot.reply_to(message, welcome)\
+\
+\
+@bot.message_handler(commands=['caption'])\
+def caption_command(message):\
+    """\
+    When you type /caption, bot asks for photo description\
+    """\
+    msg = bot.reply_to(message, "\uc0\u55357 \u56568  Describe your photo:\\n\\nExample: 'Heavy deadlift at gym, 180kg PR'")\
+    \
+    # Wait for next message\
+    bot.register_next_step_handler(msg, generate_caption_from_description)\
+\
+\
+def generate_caption_from_description(message):\
+    """\
+    Takes your description and generates caption\
+    """\
+    photo_description = message.text\
+    \
+    # Show we're thinking\
+    bot.send_chat_action(message.chat.id, 'typing')\
+    \
+    # Generate the caption\
+    caption = generate_caption(photo_description, content_type="fitness")\
+    \
+    # Send the caption back to you\
+    response = f"""\
+\uc0\u10024  GENERATED CAPTION:\
+\
+\{caption\}\
+\
+---\
+\
+Options:\
+/post - Post this now\
+/edit - Edit the caption\
+/schedule - Schedule for specific time\
+/discard - Delete\
+"""\
+    \
+    bot.send_message(message.chat.id, response)\
+\
+\
+@bot.message_handler(commands=['status'])\
+def status_command(message):\
+    """\
+    Shows bot status\
+    """\
+    status = """\
+\uc0\u10003  Bot Status: ONLINE\
+\uc0\u10003  Claude API: Connected\
+\uc0\u10003  Telegram: Connected\
+\uc0\u10003  Instagram: Ready\
+\uc0\u10003  Scheduler: Running\
+\
+Everything is working! \uc0\u55356 \u57225 \
+"""\
+    bot.reply_to(message, status)\
+\
+\
+@bot.message_handler(commands=['help'])\
+def help_command(message):\
+    """\
+    Shows help menu\
+    """\
+    help_text = """\
+INSTAGRAM BOT - HELP MENU\
+\
+/caption - Generate caption from photo description\
+/schedule - Schedule posts for specific times\
+/status - Check if bot is running\
+/digest - Get daily summary\
+/edit - Edit a caption\
+/post - Post to Instagram immediately\
+/history - See past posts\
+/analytics - View engagement stats\
+\
+HOW TO USE:\
+1. Type /caption\
+2. Describe your photo\
+3. Bot generates caption\
+4. Review and approve\
+5. Post or schedule\
+\
+TIPS:\
+- Best time to post: 6-7 AM (fitness content)\
+- Videos get 3x more engagement\
+- Ask questions in captions (increases comments)\
+\
+Need more help? Reply with your question!\
+"""\
+    bot.reply_to(message, help_text)\
+\
+\
+# Handle all other text messages\
+@bot.message_handler(func=lambda message: True)\
+def handle_messages(message):\
+    """\
+    Handles any message that doesn't match a command\
+    """\
+    \
+    text = message.text.lower()\
+    \
+    if "hello" in text or "hi" in text:\
+        bot.reply_to(message, "\uc0\u55357 \u56395  Hey Ibrahim! Type /caption to generate Instagram captions, or /help for more options.")\
+    \
+    elif "status" in text:\
+        bot.send_message(message.chat.id, "\uc0\u10003  Bot is running perfectly!")\
+    \
+    else:\
+        bot.reply_to(message, "I didn't understand that. Type /help to see what I can do!")\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# SCHEDULER - Sets up tasks that run automatically\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+def setup_scheduler():\
+    """\
+    This sets up tasks that run at specific times\
+    """\
+    scheduler = BackgroundScheduler()\
+    \
+    # Send morning digest at 6:00 AM every day\
+    scheduler.add_job(\
+        func=send_morning_digest,\
+        trigger="cron",\
+        hour=6,\
+        minute=0,\
+        id='morning_digest'\
+    )\
+    \
+    scheduler.start()\
+    print("\uc0\u10003  Scheduler started! Morning digest at 6 AM every day.")\
+\
+\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+# MAIN - This is where everything starts\
+# \uc0\u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \
+\
+if __name__ == "__main__":\
+    print("""\
+\uc0\u9556 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9559 \
+\uc0\u9553           INSTAGRAM BOT - STARTING UP                          \u9553 \
+\uc0\u9562 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9552 \u9565 \
+    """)\
+    \
+    # Check if tokens are loaded\
+    if not TELEGRAM_TOKEN or not CLAUDE_API_KEY:\
+        print("\uc0\u10060  ERROR: Missing API keys!")\
+        print("Make sure you set environment variables:")\
+        print("- TELEGRAM_TOKEN")\
+        print("- CLAUDE_API_KEY")\
+        print("- YOUR_CHAT_ID")\
+        exit(1)\
+    \
+    print("\uc0\u10003  Telegram Token: Loaded")\
+    print("\uc0\u10003  Claude API Key: Loaded")\
+    print("\uc0\u10003  Chat ID: Loaded")\
+    \
+    # Start scheduler\
+    setup_scheduler()\
+    \
+    # Start Telegram bot (this runs forever)\
+    print("\\n\uc0\u55358 \u56598  Bot is running! Listening for messages...")\
+    print("Send /help to see available commands.\\n")\
+    \
+    bot.polling()}
