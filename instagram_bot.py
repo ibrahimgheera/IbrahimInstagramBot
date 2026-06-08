@@ -5,7 +5,8 @@ import time
 import requests
 import json
 import hashlib
-from datetime import datetime, timedelta
+import langdetect
+from datetime import datetime
 from groq import Groq
 import telebot
 
@@ -37,10 +38,10 @@ YOUR ROLE: Help with captions, content strategy, post ideas, hashtags, daily tas
 WHEN IBRAHIM ASKS FOR A CAPTION:
 Generate engaging Instagram caption with strong hook, value, CTA, and 8-10 hashtags.
 
-COMMANDS YOU UNDERSTAND:
-- Any question or request → answer helpfully
-- Caption requests → generate full caption
-- Content ideas → give specific actionable ideas"""
+IMPORTANT FOR VOICE REPLIES:
+- Keep responses concise and natural — they will be spoken aloud
+- Avoid bullet points, asterisks, hashtags, or markdown in voice replies
+- Write like you're speaking, not typing"""
 
 # ============ CONVERSATION MEMORY ============
 def get_conversation(chat_id):
@@ -54,13 +55,16 @@ def add_to_conversation(chat_id, role, content):
     if len(conversation) > 10:
         user_conversations[chat_id] = conversation[-10:]
 
-def chat_with_ai(chat_id, user_message):
+def chat_with_ai(chat_id, user_message, voice_mode=False):
     add_to_conversation(chat_id, "user", user_message)
     conversation = get_conversation(chat_id)
+    system = SYSTEM_PROMPT
+    if voice_mode:
+        system += "\n\nYou are replying via VOICE. Keep it short, natural, conversational. No bullet points, no markdown, no hashtags. Max 3 sentences."
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}] + conversation,
+            messages=[{"role": "system", "content": system}] + conversation,
             max_tokens=800,
             temperature=0.7
         )
@@ -70,35 +74,118 @@ def chat_with_ai(chat_id, user_message):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# ============ SHARED: process any text (used by both text + voice handlers) ============
-def process_text(chat_id, text, reply_to_message=None):
-    """Core logic — handles image requests, reminders, and AI chat"""
+# ============ TTS — TEXT TO VOICE ============
+def detect_language(text):
+    """Detect if text is Arabic or English"""
+    try:
+        lang = langdetect.detect(text)
+        return "arabic" if lang == "ar" else "english"
+    except:
+        # Fallback: check for Arabic characters
+        arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06FF')
+        return "arabic" if arabic_chars > len(text) * 0.3 else "english"
+
+def text_to_voice(text, language="english"):
+    """Convert text to voice using Groq Orpheus TTS — FREE tier"""
+    try:
+        # Choose model and voice based on language
+        if language == "arabic":
+            model = "canopylabs/orpheus-arabic-saudi"
+            voice = "abdullah"  # calm professional male Arabic voice
+        else:
+            model = "canopylabs/orpheus-v1-english"
+            voice = "daniel"    # natural male English voice
+
+        # Groq TTS has 200 char limit — split if needed
+        chunks = []
+        words = text.split()
+        current = ""
+        for word in words:
+            if len(current) + len(word) + 1 <= 190:
+                current += (" " if current else "") + word
+            else:
+                if current:
+                    chunks.append(current)
+                current = word
+        if current:
+            chunks.append(current)
+
+        # Generate audio for each chunk and combine
+        all_audio = b""
+        for chunk in chunks:
+            response = groq_client.audio.speech.create(
+                model=model,
+                voice=voice,
+                input=chunk,
+                response_format="wav"
+            )
+            # Read bytes from response
+            audio_bytes = b""
+            for data in response.iter_bytes():
+                audio_bytes += data
+            all_audio += audio_bytes
+
+        # Save combined audio
+        output_path = "/tmp/bot_reply.wav"
+        with open(output_path, "wb") as f:
+            f.write(all_audio)
+
+        return output_path
+
+    except Exception as e:
+        print(f"TTS error: {e}")
+        return None
+
+def send_voice_reply(chat_id, text, language="english", reply_to=None):
+    """Generate TTS and send as voice note to Telegram"""
+    audio_path = text_to_voice(text, language)
+    if audio_path:
+        with open(audio_path, "rb") as audio:
+            if reply_to:
+                bot.send_voice(chat_id, audio, reply_to_message_id=reply_to.message_id)
+            else:
+                bot.send_voice(chat_id, audio)
+        return True
+    else:
+        # Fallback to text if TTS fails
+        if reply_to:
+            bot.reply_to(reply_to, text)
+        else:
+            bot.send_message(chat_id, text)
+        return False
+
+# ============ SHARED PROCESSING LOGIC ============
+def process_text(chat_id, text, reply_to_message=None, voice_reply=False, language="english"):
+    """Core logic — handles image requests, reminders, AI chat"""
     text_lower = text.lower()
 
-    def send(msg):
+    def send_text(msg):
         if reply_to_message:
             bot.reply_to(reply_to_message, msg)
         else:
             bot.send_message(chat_id, msg)
 
-    # IMAGE REQUEST
+    def send_response(msg):
+        """Send as voice if voice_reply=True, else as text"""
+        if voice_reply:
+            send_voice_reply(chat_id, msg, language=language, reply_to=reply_to_message)
+        else:
+            send_text(msg)
+
+    # IMAGE REQUEST — never reply with voice for these
     image_triggers = ["send me", "show me", "give me", "image", "photo", "picture", "pic"]
     if any(trigger in text_lower for trigger in image_triggers):
         bot.send_chat_action(chat_id, 'upload_photo')
         try:
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
-                messages=[{
-                    "role": "user",
-                    "content": f'Extract the image search query from: "{text}". Reply with ONLY 2-4 words, nothing else. Example: "deadlift workout" or "healthy cookies"'
-                }],
-                max_tokens=20,
-                temperature=0
+                messages=[{"role": "user", "content": f'Extract the image search query from: "{text}". Reply with ONLY 2-4 words, nothing else.'}],
+                max_tokens=20, temperature=0
             )
             query = response.choices[0].message.content.strip().strip('"')
         except:
             query = text
-        send(f"🔍 Searching for: {query}...")
+        send_text(f"🔍 Searching for: {query}...")
         send_image(chat_id, query)
         return
 
@@ -108,20 +195,22 @@ def process_text(chat_id, text, reply_to_message=None):
         bot.send_chat_action(chat_id, 'typing')
         result = parse_reminder_with_ai(text)
         if result.get("valid"):
-            reminders.append({
-                "task": result["task"],
-                "datetime": result["datetime"],
-                "chat_id": chat_id
-            })
-            send(f"✅ Reminder set!\n\n📌 Task: {result['task']}\n⏰ Time: {result['datetime']}\n\nI'll message you at that time! 🔔")
+            reminders.append({"task": result["task"], "datetime": result["datetime"], "chat_id": chat_id})
+            msg = f"Reminder set! I'll remind you to {result['task']} at {result['datetime']}."
+            send_response(msg)
+            if not voice_reply:
+                send_text(f"✅ Reminder set!\n\n📌 Task: {result['task']}\n⏰ Time: {result['datetime']}\n\nI'll message you at that time! 🔔")
         else:
-            send("⚠️ Couldn't understand the time. Try:\n'Remind me at 3pm to post'\n'Remind me tomorrow 9am to call Ahmed'")
+            send_response("I couldn't understand the time for your reminder. Try saying something like: remind me at 3pm to post.")
         return
 
     # AI ASSISTANT (default)
     bot.send_chat_action(chat_id, 'typing')
-    response = chat_with_ai(chat_id, text)
-    send(response)
+    ai_response = chat_with_ai(chat_id, text, voice_mode=voice_reply)
+    send_response(ai_response)
+    # If voice reply, also send text so Ibrahim can read it
+    if voice_reply:
+        send_text(f"💬 _{ai_response}_")
 
 # ============ VOICE MESSAGE HANDLER — must be before catch-all ============
 @bot.message_handler(content_types=['voice'])
@@ -130,40 +219,38 @@ def handle_voice(message):
     bot.send_chat_action(chat_id, 'typing')
 
     try:
-        # Step 1: Get file path from Telegram
+        # Step 1: Download voice from Telegram
         file_info = bot.get_file(message.voice.file_id)
         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
-
-        # Step 2: Download the audio
         audio_data = requests.get(file_url).content
-        local_path = "/tmp/voice_message.ogg"
+        local_path = "/tmp/voice_in.ogg"
         with open(local_path, "wb") as f:
             f.write(audio_data)
 
-        # Step 3: Transcribe with Groq Whisper (FREE)
+        # Step 2: Transcribe with Groq Whisper
         with open(local_path, "rb") as audio_file:
             transcription = requests.post(
                 "https://api.groq.com/openai/v1/audio/transcriptions",
                 headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
                 files={"file": ("voice.ogg", audio_file, "audio/ogg")},
-                data={
-                    "model": "whisper-large-v3-turbo",
-                    "response_format": "json"
-                }
+                data={"model": "whisper-large-v3-turbo", "response_format": "json"}
             )
 
-        result = transcription.json()
-        transcribed_text = result.get("text", "").strip()
+        transcribed_text = transcription.json().get("text", "").strip()
 
         if not transcribed_text:
             bot.reply_to(message, "⚠️ Couldn't understand the voice. Please try again.")
             return
 
+        # Step 3: Detect language for TTS reply
+        language = detect_language(transcribed_text)
+
         # Step 4: Show what was heard
         bot.reply_to(message, f"🎤 *You said:* _{transcribed_text}_", parse_mode="Markdown")
 
-        # Step 5: Process exactly like typed text
-        process_text(chat_id, transcribed_text)
+        # Step 5: Process and reply with voice
+        bot.send_chat_action(chat_id, 'record_voice')
+        process_text(chat_id, transcribed_text, reply_to_message=None, voice_reply=True, language=language)
 
     except Exception as e:
         bot.reply_to(message, f"⚠️ Voice error: {str(e)}")
@@ -239,8 +326,7 @@ def send_image(chat_id, query):
         data = response.json()
         if data.get("photos"):
             photo = data["photos"][0]
-            image_url = photo["src"]["large"]
-            bot.send_photo(chat_id, image_url, caption=f"📸 {query.title()}")
+            bot.send_photo(chat_id, photo["src"]["large"], caption=f"📸 {query.title()}")
             return True
         bot.send_message(chat_id, f"⚠️ Couldn't find images for '{query}'. Try a different keyword!")
         return False
@@ -253,26 +339,14 @@ def parse_reminder_with_ai(text):
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[{
-                "role": "user",
-                "content": f"""Extract reminder details from this message: "{text}"
-
+            messages=[{"role": "user", "content": f"""Extract reminder details from: "{text}"
 Current time: {datetime.now().strftime("%Y-%m-%d %H:%M")} (Dubai time GST UTC+4)
-
-Reply ONLY with JSON like this, nothing else:
-{{
-  "task": "what to remind about",
-  "datetime": "YYYY-MM-DD HH:MM",
-  "valid": true
-}}
-
-If you cannot extract a clear time, set valid to false."""
-            }],
-            max_tokens=100,
-            temperature=0
+Reply ONLY with JSON, nothing else:
+{{"task": "what to remind about", "datetime": "YYYY-MM-DD HH:MM", "valid": true}}
+If you cannot extract a clear time, set valid to false."""}],
+            max_tokens=100, temperature=0
         )
-        raw = response.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
+        raw = response.choices[0].message.content.strip().replace("```json", "").replace("```", "").strip()
         return json.loads(raw)
     except:
         return {"valid": False}
@@ -318,9 +392,7 @@ def check_websites():
             continue
         if new_hash != data["hash"]:
             tracked_websites[url]["hash"] = new_hash
-            chat_id = data["chat_id"]
-            label = data.get("label", url)
-            bot.send_message(chat_id, f"🚨 WEBSITE CHANGED!\n\n🌐 {label}\n🔗 {url}\n\nCheck it now! 👆")
+            bot.send_message(data["chat_id"], f"🚨 WEBSITE CHANGED!\n\n🌐 {data.get('label', url)}\n🔗 {url}\n\nCheck it now! 👆")
 
 # ============ SCHEDULER ============
 def run_scheduler():
@@ -336,13 +408,17 @@ def run_scheduler():
 def start_command(message):
     bot.reply_to(message, """👋 Hey Ibrahim! I'm live! 🚀
 
-🎤 VOICE — send any voice note (Arabic or English)
+🎤 VOICE IN + VOICE OUT
+Send a voice note → I reply with a voice note!
+Works in Arabic 🇸🇦 and English 🇬🇧
+
 📸 IMAGES — "send me [topic] image"
 ⏰ REMINDERS — "remind me at 3pm to post"
 🌐 TRACK — /track [url] [nickname]
 📊 REPORT — /report
+🔄 CLEAR — /clear
 
-💬 Just talk to me normally for captions, ideas, anything!""")
+💬 Or just type normally!""")
 
 @bot.message_handler(commands=['report'])
 def report_command(message):
@@ -404,14 +480,14 @@ def clear_command(message):
 # ============ TEXT HANDLER — catch-all (MUST be last) ============
 @bot.message_handler(func=lambda message: True, content_types=['text'])
 def handle_text_messages(message):
-    # content_types=['text'] ensures this ONLY fires for text, not voice/photo/etc
-    process_text(message.chat.id, message.text, reply_to_message=message)
+    process_text(message.chat.id, message.text, reply_to_message=message, voice_reply=False)
 
 # ============ MAIN ============
 if __name__ == "__main__":
     print("✓ Bot Running!")
-    print("✓ Smart Assistant + Voice (Arabic & English)")
-    print("✓ Daily Analytics | Image Sender | Reminders | Website Tracker")
+    print("✓ Voice IN (Whisper) + Voice OUT (Orpheus TTS)")
+    print("✓ Arabic & English")
+    print("✓ Smart Assistant | Daily Analytics | Images | Reminders | Website Tracker")
 
     if not TELEGRAM_TOKEN or not GROQ_API_KEY:
         print("❌ Missing TELEGRAM_TOKEN or GROQ_API_KEY!")
@@ -419,4 +495,12 @@ if __name__ == "__main__":
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
-    bot.polling(none_stop=True)
+
+    while True:
+        try:
+            print("🔄 Bot polling started...")
+            bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ Connection dropped: {e}")
+            print("🔄 Restarting in 10 seconds...")
+            time.sleep(10)
