@@ -24,7 +24,7 @@ user_conversations = {}
 reminders = []
 tracked_websites = {}
 
-# ============ BOT 1 — SMART ASSISTANT ============
+# ============ SYSTEM PROMPT ============
 SYSTEM_PROMPT = """You are Ibrahim's personal assistant and Instagram content strategist.
 
 WHO IBRAHIM IS:
@@ -42,6 +42,7 @@ COMMANDS YOU UNDERSTAND:
 - Caption requests → generate full caption
 - Content ideas → give specific actionable ideas"""
 
+# ============ CONVERSATION MEMORY ============
 def get_conversation(chat_id):
     if chat_id not in user_conversations:
         user_conversations[chat_id] = []
@@ -68,6 +69,105 @@ def chat_with_ai(chat_id, user_message):
         return ai_response
     except Exception as e:
         return f"Error: {str(e)}"
+
+# ============ SHARED: process any text (used by both text + voice handlers) ============
+def process_text(chat_id, text, reply_to_message=None):
+    """Core logic — handles image requests, reminders, and AI chat"""
+    text_lower = text.lower()
+
+    def send(msg):
+        if reply_to_message:
+            bot.reply_to(reply_to_message, msg)
+        else:
+            bot.send_message(chat_id, msg)
+
+    # IMAGE REQUEST
+    image_triggers = ["send me", "show me", "give me", "image", "photo", "picture", "pic"]
+    if any(trigger in text_lower for trigger in image_triggers):
+        bot.send_chat_action(chat_id, 'upload_photo')
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{
+                    "role": "user",
+                    "content": f'Extract the image search query from: "{text}". Reply with ONLY 2-4 words, nothing else. Example: "deadlift workout" or "healthy cookies"'
+                }],
+                max_tokens=20,
+                temperature=0
+            )
+            query = response.choices[0].message.content.strip().strip('"')
+        except:
+            query = text
+        send(f"🔍 Searching for: {query}...")
+        send_image(chat_id, query)
+        return
+
+    # REMINDER
+    reminder_triggers = ["remind me", "reminder", "don't let me forget", "alert me"]
+    if any(trigger in text_lower for trigger in reminder_triggers):
+        bot.send_chat_action(chat_id, 'typing')
+        result = parse_reminder_with_ai(text)
+        if result.get("valid"):
+            reminders.append({
+                "task": result["task"],
+                "datetime": result["datetime"],
+                "chat_id": chat_id
+            })
+            send(f"✅ Reminder set!\n\n📌 Task: {result['task']}\n⏰ Time: {result['datetime']}\n\nI'll message you at that time! 🔔")
+        else:
+            send("⚠️ Couldn't understand the time. Try:\n'Remind me at 3pm to post'\n'Remind me tomorrow 9am to call Ahmed'")
+        return
+
+    # AI ASSISTANT (default)
+    bot.send_chat_action(chat_id, 'typing')
+    response = chat_with_ai(chat_id, text)
+    send(response)
+
+# ============ VOICE MESSAGE HANDLER — must be before catch-all ============
+@bot.message_handler(content_types=['voice'])
+def handle_voice(message):
+    chat_id = message.chat.id
+    bot.send_chat_action(chat_id, 'typing')
+
+    try:
+        # Step 1: Get file path from Telegram
+        file_info = bot.get_file(message.voice.file_id)
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
+
+        # Step 2: Download the audio
+        audio_data = requests.get(file_url).content
+        local_path = "/tmp/voice_message.ogg"
+        with open(local_path, "wb") as f:
+            f.write(audio_data)
+
+        # Step 3: Transcribe with Groq Whisper (FREE)
+        with open(local_path, "rb") as audio_file:
+            transcription = requests.post(
+                "https://api.groq.com/openai/v1/audio/transcriptions",
+                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                files={"file": ("voice.ogg", audio_file, "audio/ogg")},
+                data={
+                    "model": "whisper-large-v3-turbo",
+                    "response_format": "json"
+                }
+            )
+
+        result = transcription.json()
+        transcribed_text = result.get("text", "").strip()
+
+        if not transcribed_text:
+            bot.reply_to(message, "⚠️ Couldn't understand the voice. Please try again.")
+            return
+
+        # Step 4: Show what was heard
+        bot.reply_to(message, f"🎤 *You said:* _{transcribed_text}_", parse_mode="Markdown")
+
+        # Step 5: Process exactly like typed text
+        process_text(chat_id, transcribed_text)
+
+    except Exception as e:
+        bot.reply_to(message, f"⚠️ Voice error: {str(e)}")
+        print(f"Voice handler error: {e}")
 
 # ============ BOT 2 — DAILY ANALYTICS ============
 def get_instagram_stats():
@@ -123,7 +223,6 @@ def send_daily_report():
 # ============ BOT 3 — IMAGE SENDER ============
 def send_image(chat_id, query):
     try:
-        # Try Unsplash first
         if UNSPLASH_ACCESS_KEY:
             url = f"https://api.unsplash.com/search/photos?query={requests.utils.quote(query)}&per_page=3&client_id={UNSPLASH_ACCESS_KEY}"
             response = requests.get(url, timeout=10)
@@ -134,8 +233,6 @@ def send_image(chat_id, query):
                 photographer = photo["user"]["name"]
                 bot.send_photo(chat_id, image_url, caption=f"📸 {query.title()}\nPhoto by {photographer} on Unsplash")
                 return True
-
-        # Fallback: Pexels API (free)
         headers = {"Authorization": "563492ad6f91700001000001b1e7e6b8e7a748d5a5a5a5a5a5a5a5a5"}
         url = f"https://api.pexels.com/v1/search?query={requests.utils.quote(query)}&per_page=3"
         response = requests.get(url, headers=headers, timeout=10)
@@ -145,8 +242,7 @@ def send_image(chat_id, query):
             image_url = photo["src"]["large"]
             bot.send_photo(chat_id, image_url, caption=f"📸 {query.title()}")
             return True
-
-        bot.send_message(chat_id, f"⚠️ Couldn't find images for '{query}' right now. Try a different keyword!")
+        bot.send_message(chat_id, f"⚠️ Couldn't find images for '{query}'. Try a different keyword!")
         return False
     except Exception as e:
         bot.send_message(chat_id, f"⚠️ Image search failed: {str(e)}")
@@ -160,7 +256,7 @@ def parse_reminder_with_ai(text):
             messages=[{
                 "role": "user",
                 "content": f"""Extract reminder details from this message: "{text}"
-                
+
 Current time: {datetime.now().strftime("%Y-%m-%d %H:%M")} (Dubai time GST UTC+4)
 
 Reply ONLY with JSON like this, nothing else:
@@ -170,11 +266,7 @@ Reply ONLY with JSON like this, nothing else:
   "valid": true
 }}
 
-If you cannot extract a clear time, set valid to false.
-Examples:
-- "remind me to call Ahmed at 3pm today" → task: "Call Ahmed", datetime: today at 15:00
-- "remind me tomorrow 9am to post on instagram" → task: "Post on Instagram", datetime: tomorrow at 09:00
-- "remind me in 2 hours to eat" → task: "Eat", datetime: now + 2 hours"""
+If you cannot extract a clear time, set valid to false."""
             }],
             max_tokens=100,
             temperature=0
@@ -193,10 +285,7 @@ def check_reminders():
         remind_time = datetime.strptime(reminder["datetime"], "%Y-%m-%d %H:%M")
         if now >= remind_time:
             try:
-                bot.send_message(
-                    reminder["chat_id"],
-                    f"⏰ REMINDER!\n\n📌 {reminder['task']}\n\nDon't forget! 💪"
-                )
+                bot.send_message(reminder["chat_id"], f"⏰ REMINDER!\n\n📌 {reminder['task']}\n\nDon't forget! 💪")
             except:
                 pass
         else:
@@ -208,10 +297,8 @@ def get_website_hash(url):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=15)
-        # Only hash the text content, not headers/timestamps
         from bs4 import BeautifulSoup
         soup = BeautifulSoup(response.text, "html.parser")
-        # Remove scripts and styles for cleaner comparison
         for tag in soup(["script", "style", "meta", "time"]):
             tag.decompose()
         content = soup.get_text(separator=" ", strip=True)
@@ -233,23 +320,13 @@ def check_websites():
             tracked_websites[url]["hash"] = new_hash
             chat_id = data["chat_id"]
             label = data.get("label", url)
-            bot.send_message(
-                chat_id,
-                f"""🚨 WEBSITE CHANGED!
-
-🌐 {label}
-🔗 {url}
-
-Something changed on this page!
-Could be a new discount, price change, or update.
-Check it now! 👆"""
-            )
+            bot.send_message(chat_id, f"🚨 WEBSITE CHANGED!\n\n🌐 {label}\n🔗 {url}\n\nCheck it now! 👆")
 
 # ============ SCHEDULER ============
 def run_scheduler():
-    schedule.every().day.at("05:00").do(send_daily_report)  # 9am Dubai
-    schedule.every(1).minutes.do(check_reminders)            # Check reminders every minute
-    schedule.every(1).hours.do(check_websites)               # Check websites every hour
+    schedule.every().day.at("05:00").do(send_daily_report)
+    schedule.every(1).minutes.do(check_reminders)
+    schedule.every(1).hours.do(check_websites)
     while True:
         schedule.run_pending()
         time.sleep(30)
@@ -257,29 +334,15 @@ def run_scheduler():
 # ============ TELEGRAM HANDLERS ============
 @bot.message_handler(commands=['start'])
 def start_command(message):
-    bot.reply_to(message, """👋 Hey Ibrahim! Full Bot Team is LIVE! 🚀
+    bot.reply_to(message, """👋 Hey Ibrahim! I'm live! 🚀
 
-🤖 WHAT I CAN DO:
+🎤 VOICE — send any voice note (Arabic or English)
+📸 IMAGES — "send me [topic] image"
+⏰ REMINDERS — "remind me at 3pm to post"
+🌐 TRACK — /track [url] [nickname]
+📊 REPORT — /report
 
-📸 IMAGES — just say:
-"send me [anything] image"
-"show me [topic] photo"
-
-⏰ REMINDERS — just say:
-"remind me at 3pm to post"
-"remind me tomorrow 9am to call Ahmed"
-
-🌐 WEBSITE TRACKER:
-/track [url] [nickname]
-/mytracks — see tracked sites
-/untrack [nickname]
-
-📊 REPORTS:
-/report — Instagram stats now
-
-💬 ANYTHING ELSE:
-Just talk to me naturally!
-Captions, ideas, strategy — I got you!""")
+💬 Just talk to me normally for captions, ideas, anything!""")
 
 @bot.message_handler(commands=['report'])
 def report_command(message):
@@ -289,17 +352,9 @@ def report_command(message):
     suggestion = get_ai_daily_suggestion()
     now = datetime.now()
     if followers:
-        report = f"""📊 @calis_ibra — {now.strftime("%A, %d %b")}
-👥 Followers: {followers:,}
-➡️ Following: {following:,}
-📸 Posts: {posts:,}
-
-💡 {suggestion}"""
+        report = f"📊 @calis_ibra — {now.strftime('%A, %d %b')}\n👥 Followers: {followers:,}\n➡️ Following: {following:,}\n📸 Posts: {posts:,}\n\n💡 {suggestion}"
     else:
-        report = f"""📊 Report — {now.strftime("%A, %d %b")}
-⚠️ Could not fetch live stats
-
-💡 {suggestion}"""
+        report = f"📊 Report — {now.strftime('%A, %d %b')}\n⚠️ Could not fetch live stats\n\n💡 {suggestion}"
     bot.send_message(message.chat.id, report)
 
 @bot.message_handler(commands=['track'])
@@ -314,28 +369,17 @@ def track_command(message):
         url = "https://" + url
     bot.reply_to(message, f"⏳ Checking {label}...")
     initial_hash = get_website_hash(url)
-    tracked_websites[url] = {
-        "hash": initial_hash,
-        "label": label,
-        "chat_id": message.chat.id,
-        "added": datetime.now().strftime("%d %b %H:%M")
-    }
-    bot.send_message(message.chat.id, f"""✅ Now tracking: {label}
-🔗 {url}
-⏰ Checks every hour
-🔔 I'll alert you when anything changes!
-
-Perfect for tracking discounts, price drops, or any updates!""")
+    tracked_websites[url] = {"hash": initial_hash, "label": label, "chat_id": message.chat.id, "added": datetime.now().strftime("%d %b %H:%M")}
+    bot.send_message(message.chat.id, f"✅ Now tracking: {label}\n🔗 {url}\n⏰ Checks every hour")
 
 @bot.message_handler(commands=['mytracks'])
 def mytracks_command(message):
     if not tracked_websites:
-        bot.reply_to(message, "You're not tracking any websites yet!\n\nUse /track [url] [nickname] to start!")
+        bot.reply_to(message, "Not tracking any websites yet!\nUse /track [url] [nickname] to start!")
         return
     text = "🌐 YOUR TRACKED WEBSITES:\n\n"
     for url, data in tracked_websites.items():
         text += f"📌 {data['label']}\n🔗 {url}\nAdded: {data['added']}\n\n"
-    text += "Use /untrack [nickname] to remove one"
     bot.reply_to(message, text)
 
 @bot.message_handler(commands=['untrack'])
@@ -345,92 +389,34 @@ def untrack_command(message):
         bot.reply_to(message, "Usage: /untrack [nickname]")
         return
     label = parts[1]
-    removed = False
     for url, data in list(tracked_websites.items()):
         if data["label"].lower() == label.lower():
             del tracked_websites[url]
-            removed = True
-            break
-    if removed:
-        bot.reply_to(message, f"✅ Stopped tracking: {label}")
-    else:
-        bot.reply_to(message, f"❌ Couldn't find '{label}'. Use /mytracks to see your list.")
+            bot.reply_to(message, f"✅ Stopped tracking: {label}")
+            return
+    bot.reply_to(message, f"❌ Couldn't find '{label}'. Use /mytracks to see your list.")
 
 @bot.message_handler(commands=['clear'])
 def clear_command(message):
     user_conversations[message.chat.id] = []
     bot.reply_to(message, "🔄 Fresh start!")
 
-@bot.message_handler(func=lambda message: True)
-def handle_all_messages(message):
-    text = message.text.lower()
-
-    # IMAGE REQUEST detection
-    image_triggers = ["send me", "show me", "give me", "image", "photo", "picture", "pic"]
-    is_image_request = any(trigger in text for trigger in image_triggers)
-
-    if is_image_request:
-        bot.send_chat_action(message.chat.id, 'upload_photo')
-        # Extract search query using AI
-        try:
-            response = groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{
-                    "role": "user",
-                    "content": f'Extract the image search query from: "{message.text}". Reply with ONLY 2-4 words for the search query, nothing else. Example: "deadlift workout" or "healthy cookies" or "Dubai marina"'
-                }],
-                max_tokens=20,
-                temperature=0
-            )
-            query = response.choices[0].message.content.strip().strip('"')
-        except:
-            query = message.text.replace("send me", "").replace("show me", "").replace("image", "").replace("photo", "").strip()
-
-        bot.reply_to(message, f"🔍 Searching for: {query}...")
-        send_image(message.chat.id, query)
-        return
-
-    # REMINDER detection
-    reminder_triggers = ["remind me", "reminder", "don't let me forget", "alert me"]
-    is_reminder = any(trigger in text for trigger in reminder_triggers)
-
-    if is_reminder:
-        bot.send_chat_action(message.chat.id, 'typing')
-        result = parse_reminder_with_ai(message.text)
-        if result.get("valid"):
-            reminders.append({
-                "task": result["task"],
-                "datetime": result["datetime"],
-                "chat_id": message.chat.id
-            })
-            bot.reply_to(message, f"""✅ Reminder set!
-
-📌 Task: {result['task']}
-⏰ Time: {result['datetime']}
-
-I'll message you automatically at that time! 🔔""")
-        else:
-            bot.reply_to(message, "⚠️ I couldn't understand the time. Try:\n'Remind me at 3pm to post'\n'Remind me tomorrow 9am to call Ahmed'")
-        return
-
-    # Everything else → AI assistant
-    bot.send_chat_action(message.chat.id, 'typing')
-    response = chat_with_ai(message.chat.id, message.text)
-    bot.send_message(message.chat.id, response)
+# ============ TEXT HANDLER — catch-all (MUST be last) ============
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_text_messages(message):
+    # content_types=['text'] ensures this ONLY fires for text, not voice/photo/etc
+    process_text(message.chat.id, message.text, reply_to_message=message)
 
 # ============ MAIN ============
 if __name__ == "__main__":
-    print("✓ Full Bot Team Running!")
-    print("✓ Bot 1: Smart Assistant")
-    print("✓ Bot 2: Daily Analytics (9am Dubai)")
-    print("✓ Bot 3: Image Sender")
-    print("✓ Bot 4: Smart Reminders")
-    print("✓ Bot 5: Website Tracker")
+    print("✓ Bot Running!")
+    print("✓ Smart Assistant + Voice (Arabic & English)")
+    print("✓ Daily Analytics | Image Sender | Reminders | Website Tracker")
 
     if not TELEGRAM_TOKEN or not GROQ_API_KEY:
-        print("❌ Missing API keys!")
+        print("❌ Missing TELEGRAM_TOKEN or GROQ_API_KEY!")
         exit(1)
 
     scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
     scheduler_thread.start()
-    bot.polling()
+    bot.polling(none_stop=True)
